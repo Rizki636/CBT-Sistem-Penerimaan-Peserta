@@ -317,7 +317,10 @@ table tr:last-child td{border-bottom:none;}
   <section id="view-exam" class="hidden">
     <div class="exam-topbar">
       <div class="et-title" id="exam-topbar-title">Ujian</div>
-      <div class="timer-box" id="timer-box">⏱ --:--:--</div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span id="save-status" style="font-size:12px;opacity:.85;"></span>
+        <div class="timer-box" id="timer-box">⏱ --:--:--</div>
+      </div>
     </div>
     <div class="exam-body">
       <div class="exam-sidebar">
@@ -436,9 +439,9 @@ table tr:last-child td{border-bottom:none;}
 const APP_CONFIG = {
   // Tempel URL Web App hasil Deploy Google Apps Script di sini, contoh:
   // 'https://script.google.com/macros/s/XXXXXXXXXXXXXXXX/exec'
-  apiUrl: 'https://script.google.com/macros/s/AKfycby4-evt6I2jWzq0PXmIfbkcFjrOhQF-tLg8QJEkSGq-AKoSgrTImoUL2P_feUu_-v3YmQ/exec',
+  apiUrl: 'https://script.google.com/macros/s/AKfycbzoni-HuyMU0HTBHx9RzXiorGcANhQRWNSbddsJ9Q22-2VaIBTe02CR5ldmOzLtmrOYpA/exec',
   brandTitle: 'Sistem Computer Based Test',
-  brandSub: 'Sistem Penerimaan Peserta',
+  brandSub: 'Politeknik Kesehatan Kemenkes Banjarmasin',
   autosaveIntervalMs: 15000
 };
 
@@ -458,15 +461,16 @@ function setLoading(on){
   document.getElementById('loading-overlay').classList.toggle('hidden', pendingCalls <= 0);
 }
 
-async function api(action, data = {}) {
+async function api(action, data = {}, opts = {}) {
   if (APP_CONFIG.apiUrl.indexOf('PASTE_URL') === 0) {
     toast('error', 'apiUrl belum diisi di index.html. Lihat komentar APP_CONFIG di bagian atas script.');
     throw new Error('apiUrl belum dikonfigurasi');
   }
+  const silent = !!opts.silent;
   const session = getSession();
   const payload = Object.assign({}, data);
   if (session) { payload.userId = payload.userId || session.userId; payload.token = payload.token || session.token; }
-  setLoading(true);
+  if (!silent) setLoading(true);
   try {
     const res = await fetch(APP_CONFIG.apiUrl, {
       method: 'POST',
@@ -480,10 +484,10 @@ async function api(action, data = {}) {
     }
     return json;
   } catch (err) {
-    toast('error', 'Gagal menghubungi server: ' + err.message);
+    if (!silent) toast('error', 'Gagal menghubungi server: ' + err.message);
     return { success: false, message: err.message };
   } finally {
-    setLoading(false);
+    if (!silent) setLoading(false);
   }
 }
 
@@ -501,7 +505,10 @@ function openModal(title, bodyHtml, footHtml) {
   document.getElementById('modal-foot').innerHTML = footHtml || '';
   document.getElementById('modal-root').classList.remove('hidden');
 }
-function closeModal() { document.getElementById('modal-root').classList.add('hidden'); }
+function closeModal() {
+  if (activeCountdownTimer) { clearInterval(activeCountdownTimer); activeCountdownTimer = null; }
+  document.getElementById('modal-root').classList.add('hidden');
+}
 document.getElementById('modal-close-btn').onclick = closeModal;
 document.getElementById('modal-root').addEventListener('click', e => { if (e.target.id === 'modal-root') closeModal(); });
 
@@ -644,7 +651,7 @@ async function viewResult(examId) {
   const res = await api('getResult', { examId });
   if (!res.success) { toast('error', res.message); return; }
   if (!res.announced) {
-    openModal('Pengumuman Hasil', '<p>Hasil ujian <b>' + esc(res.title) + '</b> akan diumumkan pada:</p><div class="countdown-big" id="countdown-target" data-target="' + res.announceAt + '">--</div><p class="field-hint">Silakan cek kembali halaman ini setelah waktu tersebut.</p>', '<button class="btn btn-outline" onclick="closeModal()">Tutup</button>');
+    openModal('Pengumuman Hasil', '<p>Hasil ujian <b>' + esc(res.title) + '</b> akan diumumkan pada <b>' + fmtDateTime(res.announceAt) + '</b>. Sisa waktu:</p><div class="countdown-big" id="countdown-target">--</div><p class="field-hint">Silakan cek kembali halaman ini setelah waktu tersebut.</p>', '<button class="btn btn-outline" onclick="closeModal()">Tutup</button>');
     startCountdownInModal(res.announceAt);
   } else {
     openModal('Hasil Ujian: ' + esc(res.title),
@@ -658,20 +665,22 @@ async function viewResult(examId) {
   }
 }
 
+let activeCountdownTimer = null;
+
 function startCountdownInModal(targetIso) {
-  const el = document.getElementById('countdown-target');
-  if (!el) return;
+  if (activeCountdownTimer) { clearInterval(activeCountdownTimer); activeCountdownTimer = null; }
   const target = new Date(targetIso).getTime();
   const tick = () => {
     const el2 = document.getElementById('countdown-target');
-    if (!el2) return; // modal closed
+    if (!el2) { clearInterval(activeCountdownTimer); activeCountdownTimer = null; return; } // modal sudah ditutup/diganti
     const diff = target - Date.now();
-    if (diff <= 0) { el2.textContent = 'Sedang diumumkan...'; clearInterval(timer); return; }
+    if (isNaN(diff)) { el2.textContent = '-'; clearInterval(activeCountdownTimer); activeCountdownTimer = null; return; }
+    if (diff <= 0) { el2.textContent = 'Sedang diumumkan...'; clearInterval(activeCountdownTimer); activeCountdownTimer = null; return; }
     const d = Math.floor(diff / 86400000), h = Math.floor(diff % 86400000 / 3600000), m = Math.floor(diff % 3600000 / 60000), sec = Math.floor(diff % 60000 / 1000);
-    el2.textContent = (d > 0 ? d + 'h ' : '') + String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0');
+    el2.textContent = (d > 0 ? d + ' hari ' : '') + String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0');
   };
   tick();
-  const timer = setInterval(tick, 1000);
+  activeCountdownTimer = setInterval(tick, 1000);
 }
 
 /* =====================================================================
@@ -680,6 +689,9 @@ function startCountdownInModal(targetIso) {
 let examState = null; // {examId, title, durationMinutes, deadline, questions, answers, currentIndex}
 let examTimerInterval = null;
 let autosaveInterval = null;
+let saveDebounceTimer = null;
+let saveInFlight = false;
+let saveQueuedAgain = false;
 
 async function resumeOrStartExam(examId) {
   const res = await api('startExam', { examId });
@@ -704,6 +716,7 @@ async function resumeOrStartExam(examId) {
   renderCurrentQuestion();
   startExamTimer();
   startAutosave();
+  setSaveStatus('saved');
 
   window.onbeforeunload = () => 'Anda sedang mengerjakan ujian. Yakin ingin meninggalkan halaman ini?';
 }
@@ -728,14 +741,40 @@ function startExamTimer() {
   examTimerInterval = setInterval(tick, 1000);
 }
 
+// Autosave berjalan di BELAKANG LAYAR (tidak menampilkan overlay loading
+// penuh layar) supaya peserta tetap bisa langsung berpindah soal / memilih
+// jawaban tanpa terasa "loading" setiap beberapa detik. Perubahan jawaban
+// di-debounce dulu (menunggu jeda singkat) dan tidak boleh tumpang tindih
+// satu sama lain supaya jawaban terbaru tidak pernah tertimpa oleh kiriman
+// yang lebih lama.
+function setSaveStatus(state) {
+  const el = document.getElementById('save-status');
+  if (!el) return;
+  if (state === 'saving') el.textContent = 'Menyimpan...';
+  else if (state === 'saved') el.textContent = 'Tersimpan ✓';
+  else if (state === 'error') el.textContent = 'Gagal menyimpan, mencoba lagi...';
+  else el.textContent = '';
+}
+
+function scheduleSaveAnswers() {
+  if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+  saveDebounceTimer = setTimeout(saveAnswersToServer, 600);
+}
+
 function startAutosave() {
   if (autosaveInterval) clearInterval(autosaveInterval);
-  autosaveInterval = setInterval(() => saveAnswersToServer(), APP_CONFIG.autosaveIntervalMs);
+  autosaveInterval = setInterval(saveAnswersToServer, APP_CONFIG.autosaveIntervalMs);
 }
 
 async function saveAnswersToServer() {
   if (!examState) return;
-  await api('saveAnswers', { examId: examState.examId, answers: examState.answers });
+  if (saveInFlight) { saveQueuedAgain = true; return; } // jangan kirim dobel bersamaan
+  saveInFlight = true;
+  setSaveStatus('saving');
+  const res = await api('saveAnswers', { examId: examState.examId, answers: examState.answers }, { silent: true });
+  saveInFlight = false;
+  setSaveStatus(res && res.success ? 'saved' : 'error');
+  if (saveQueuedAgain) { saveQueuedAgain = false; saveAnswersToServer(); }
 }
 
 function renderQuestionGrid() {
@@ -770,7 +809,7 @@ function selectAnswer(questionId, key) {
   examState.answers[questionId] = key;
   renderCurrentQuestion();
   renderQuestionGrid();
-  saveAnswersToServer();
+  scheduleSaveAnswers();
 }
 
 document.getElementById('btn-prev-q').onclick = () => { if (examState.currentIndex > 0) goToQuestion(examState.currentIndex - 1); };
@@ -794,6 +833,7 @@ async function finishExam(auto) {
   closeModal();
   if (examTimerInterval) clearInterval(examTimerInterval);
   if (autosaveInterval) clearInterval(autosaveInterval);
+  if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
   window.onbeforeunload = null;
   const res = await api('submitExam', { examId: examState.examId, answers: examState.answers });
   localStorage.removeItem('cbt_exam_inprogress');
